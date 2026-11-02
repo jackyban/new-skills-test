@@ -837,8 +837,11 @@ _interactive() {
           _judge
         fi
       fi
-      _summary
+      # finish() clears the screen as its first act, so the summary has to come
+      # after it or the human never sees it. The tests never noticed: a captured
+      # stdout still contains text that was scrolled off a terminal.
       finish
+      _summary
       return 0
       ;;
 
@@ -892,8 +895,8 @@ _interactive() {
       _judge
       if [[ "$JUDGED_STATE" == "$STATE_LOGGED_IN" && -n "$GH_USER" ]]; then
         say "已验证：$GH_USER @ $GH_HOST"
-        _summary
         finish
+        _summary
         return 0
       fi
       warn "仍未完成：$JUDGED_STATE"

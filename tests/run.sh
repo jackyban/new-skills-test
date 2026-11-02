@@ -110,12 +110,12 @@ run_check() {
 # The interactive flow is driven with piped input and fakes, so it is exercised
 # as a user would see it — the whole script, not a function plucked out of it.
 run_interactive() {
-  local path_prefix="$1" workdir="$2" mode="$3" input="$4" state_file="${5:-}"
+  local path_prefix="$1" workdir="$2" mode="$3" input="$4" state_file="${5:-}" curl_mode="${6:-ok}"
   local errf="$SANDBOX/stderr-i"
   OUT=$( printf '%s' "$input" | ( cd "$workdir" && \
            env PATH="$path_prefix" HOME="$SANDBOX/home" \
              HTTPS_PROXY= https_proxy= HTTP_PROXY= http_proxy= \
-             FAKE_GH_MODE="$mode" FAKE_GH_STATE="$state_file" \
+             FAKE_GH_MODE="$mode" FAKE_GH_STATE="$state_file" FAKE_CURL_MODE="$curl_mode" \
              bash "$wizard" 2>"$errf" ) )
   RC=$?
   ERR=$(cat "$errf")
@@ -454,6 +454,15 @@ if [[ "$OUT" == *"账号:"*"octocat"* ]]; then
 else
   fail "the summary names the account it ended up as" "output did not name octocat"
 fi
+
+# A captured stdout keeps text that a terminal has already scrolled away, so the
+# assertions above cannot see that the closing screen wipes everything printed
+# before it. This one can: the summary has to come after the final frame.
+if [[ "${OUT#*Setup complete}" == *"账号:"* ]]; then
+  pass "the summary survives the closing screen clear"
+else
+  fail "the summary survives the closing screen clear" "the account line was printed before the last clear"
+fi
 if [[ -f "$state" ]]; then
   pass "the login command was actually invoked"
 else
@@ -463,6 +472,30 @@ if [[ "$OUT" == *"写入文件:  无"* ]]; then
   pass "the summary says nothing was written when nothing needed writing"
 else
   fail "the summary says nothing was written when nothing needed writing" "no such line"
+fi
+
+# A login run on a machine that can only reach the host through a proxy must
+# record that fact, and say the exact line to source. This is the interactive
+# half of the proxy ticket's persistence criterion, which until now was only
+# argued from the code.
+mkdir -p "$SANDBOX/work4"
+state2="$SANDBOX/ghstate2"
+rm -f "$state2"
+run_interactive "$FP" "$SANDBOX/work4" login-flow $'\n\n\n\n\n' "$state2" direct-down
+if [[ $RC -eq 0 && "$OUT" == *"已验证：octocat @ github.com"* ]]; then
+  pass "a proxied login run completes and verifies"
+else
+  fail "a proxied login run completes and verifies" "rc=$RC"
+fi
+if [[ "$OUT" == *"export HTTPS_PROXY="* ]]; then
+  pass "the run prints the exact line to source in a new shell"
+else
+  fail "the run prints the exact line to source in a new shell" "no export hint in the output"
+fi
+if grep -q '^DSH_GH_PROXY=' "$SANDBOX/work4/.env" 2>/dev/null; then
+  pass "the proxy requirement is recorded in the value file"
+else
+  fail "the proxy requirement is recorded in the value file" "nothing recorded in $SANDBOX/work4/.env"
 fi
 
 # Nobody is there to press Enter. The run must stop and say how to get further,

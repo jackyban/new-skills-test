@@ -8,7 +8,7 @@
 
 - [x] Check mode never reads stdin, never opens a browser, never prompts
 - [x] A usable CLI produces exactly one stdout line of space-separated key=value fields in a fixed order, always including the state, the resolved executable, and the version
-- [ ] Three distinct exit codes: CLI missing, CLI too old, CLI usable
+- [x] Three distinct exit codes: CLI missing, CLI too old, CLI usable
 - [x] Resolution order — explicit environment variable, then PATH, then conventional per-platform install locations — is observable in the status line; a wrongly-set explicit variable is reported as the reason rather than silently skipped
 - [x] An unparseable version is treated as too old, never as usable
 - [x] The minimum version is pinned to one constant, and the reason the flow needs it is recorded next to it
@@ -94,11 +94,15 @@ home, the argument rejection, and the frozen-library invariant.
 
 ## Remaining before this ticket closes
 
-1. **Exit code 10 has never been produced.** The "not installed anywhere" case
-   skips itself on this machine because a real `gh` lives at
-   `/c/Program Files/GitHub CLI`, and an absolute candidate path cannot be
-   hidden by filtering PATH. It needs a host with no CLI at all, which is what
-   the verification ticket exists for.
+1. **Exit code 10 is now produced — by simulation.** It was skipped for a while
+   because a real `gh` lives at `/c/Program Files/GitHub CLI` and an absolute
+   candidate cannot be hidden by filtering PATH. The branch turned out to be
+   platform-independent, so the harness now drops the directory holding the real
+   CLI from PATH and shadows `uname`, making the wizard search the macOS
+   locations, none of which exist here. Same assertions, an honest route to
+   "nothing is there" — and the suite now finishes with no skips. What is still
+   *not* exercised is a genuinely CLI-less machine; the verdict there would be
+   reached without the simulation.
 2. **The no-hard-coded-address criterion is only true of the new code.** The
    interactive stage still carries a literal proxy address; that is the proxy
    ticket's decision to make.
@@ -126,5 +130,5 @@ guess about the machine, and it can be overridden by `DSH_GH_PROXY` or
 rather than *deleted*: the value exists in exactly one documented place instead of
 being spelled inline inside a stage, which was the actual hazard.
 
-The remaining unchecked item on this ticket is exit code 10, which needs a host
-with no CLI at all.
+Nothing on this ticket is unchecked any more. Exit code 10 was the last one, and
+it is produced by the simulated-platform case described above.
