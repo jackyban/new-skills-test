@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Stand-in for curl, driven by FAKE_CURL_MODE. The wizard uses curl for exactly
+# one thing: asking whether anything answers at https://<host>. A proxy is
+# passed as "-x URL", which is how "direct is dead but the proxy works" gets
+# simulated without touching the network.
+set -u
+
+mode="${FAKE_CURL_MODE:-ok}"
+proxy=""
+
+while (( $# )); do
+  case "$1" in
+    -x|--proxy)
+      proxy="${2:-}"
+      shift
+      [[ $# -gt 0 ]] && shift
+      ;;
+    *) shift ;;
+  esac
+done
+
+case "$mode" in
+  ok)          exit 0 ;;
+  direct-down) if [[ -n "$proxy" ]]; then exit 0; else exit 6; fi ;;
+  all-down)    exit 6 ;;
+  *)           exit 6 ;;
+esac

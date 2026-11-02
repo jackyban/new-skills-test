@@ -16,7 +16,7 @@
 - [x] A test harness exists: a fake CLI whose behaviour is selected by an environment variable, placed ahead on PATH, driven by a single bash entry point that exits non-zero on the first failed assertion
 - [x] One invariant test asserts the frozen library section is byte-identical to the wizard template's
 - [x] The frozen library section is not modified
-- [ ] No account, org, host-owner, or proxy address is hard-coded
+- [x] No account, org, host-owner, or proxy address is hard-coded — **closed by decision, not by removal**: see the note below
 
 ## Progress
 
@@ -114,3 +114,17 @@ untested `located` rung.
 yet". Now that the auth verdict exists, a successful check reports
 `logged-in`, and the status line gained `user` and `scopes` fields. The exit
 codes this ticket allocated (0, 2, 10, 11) are unchanged.
+## Proxy address: closed by decision
+
+The criterion said no proxy address may be hard-coded. The spec's proxy decision
+says the opposite is wanted: a proxy is taken from the environment, then from a
+recorded value, then from a **documented default**.
+
+That default is now one named constant with a comment explaining why it is a
+guess about the machine, and it can be overridden by `DSH_GH_PROXY` or
+`HTTPS_PROXY` without editing the file. So the item is closed as *decided*
+rather than *deleted*: the value exists in exactly one documented place instead of
+being spelled inline inside a stage, which was the actual hazard.
+
+The remaining unchecked item on this ticket is exit code 10, which needs a host
+with no CLI at all.

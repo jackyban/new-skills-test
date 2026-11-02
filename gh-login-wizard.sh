@@ -216,6 +216,28 @@ GH_HOST="github.com"
 # never inline a second copy of the number.
 GH_MIN_VERSION="2.40.0"
 
+# The documented default proxy, in one place. A machine-local port is exactly
+# the kind of value that goes stale, so it lives here, is named in every message
+# that uses it, and can be overridden with DSH_GH_PROXY or HTTPS_PROXY without
+# editing this file.
+GH_PROXY_DEFAULT="http://127.0.0.1:7890"
+
+# How the session reached the host. A closed vocabulary, so the status line
+# stays parseable and no branch can invent a new word for the same thing.
+PROXY_NONE="none"
+PROXY_ENV="env"
+PROXY_PERSISTED="persisted"
+PROXY_DEFAULT="default"
+PROXY_FAILED="failed"
+
+PROXY_KIND="none"
+GH_PROXY_URL=""
+GH_PROXY_SOURCE=""
+GH_PROXY_USED=""
+PROBE_OUT=""
+PROBE_RC=0
+PROBE_UNREACHABLE=0
+
 # The closed set of outcomes. Every judgement lands on exactly one of these and
 # on nothing else, so a reader can switch on the state without discovering a new
 # string later, and so no branch can invent a second way of saying the same
@@ -393,6 +415,128 @@ _classify_api_failure() {
   esac
 }
 
+# _gh_direct runs the CLI with the proxy variables cleared, so the direct attempt
+# is genuinely direct even on a machine whose shell exports a proxy.
+_gh_direct() {
+  GH_HOST="$GH_HOST" HTTPS_PROXY= https_proxy= HTTP_PROXY= http_proxy= \
+    ALL_PROXY= all_proxy= "$GH_BIN" "$@"
+}
+
+# _gh_via_proxy runs the CLI through one explicit proxy.
+_gh_via_proxy() {
+  local url="$1"
+  shift
+  GH_HOST="$GH_HOST" HTTPS_PROXY="$url" https_proxy="$url" \
+    HTTP_PROXY="$url" http_proxy="$url" "$GH_BIN" "$@"
+}
+
+# _proxy_candidate picks the proxy to try when the direct attempt never got an
+# answer, in the order of how much the user already committed to it: the
+# environment they set up, then a proxy an earlier run recorded, then the
+# documented default. It sets GH_PROXY_URL and GH_PROXY_SOURCE instead of
+# printing them, because a command substitution would lose the assignments with
+# its subshell — and the source is what every message has to name.
+_proxy_candidate() {
+  local url=""
+  GH_PROXY_URL=""
+  GH_PROXY_SOURCE=""
+
+  url="${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}"
+  if [[ -n "$url" ]]; then
+    GH_PROXY_URL="$url"; GH_PROXY_SOURCE="$PROXY_ENV"; return 0
+  fi
+
+  url=$(_existing DSH_GH_PROXY) || url=""
+  if [[ -n "$url" ]]; then
+    GH_PROXY_URL="$url"; GH_PROXY_SOURCE="$PROXY_PERSISTED"; return 0
+  fi
+
+  if [[ -n "$GH_PROXY_DEFAULT" ]]; then
+    GH_PROXY_URL="$GH_PROXY_DEFAULT"; GH_PROXY_SOURCE="$PROXY_DEFAULT"; return 0
+  fi
+
+  return 1
+}
+
+# _reachable [PROXY] answers one question: did anything answer on the other end.
+# curl is used because it asks the network without needing a credential — the
+# CLI itself refuses locally when nobody is logged in, which would make a dead
+# network and a missing login look identical, and that distinction is the whole
+# point of this file. A 4xx counts as an answer: reachable, and saying no.
+_reachable() {
+  local proxy="${1:-}"
+  if command -v curl >/dev/null 2>&1; then
+    if [[ -n "$proxy" ]]; then
+      curl -sS -m 8 -o /dev/null -x "$proxy" "https://$GH_HOST" 2>/dev/null
+    else
+      curl -sS -m 8 -o /dev/null "https://$GH_HOST" 2>/dev/null
+    fi
+    return
+  fi
+  # No curl. Fall back to the CLI, which is the weaker answer: it cannot tell a
+  # missing login from a dead network when it refuses before dialling. Say so
+  # here rather than pretending the two probes are equivalent.
+  if [[ -n "$proxy" ]]; then
+    _gh_via_proxy "$proxy" api user >/dev/null 2>&1
+  else
+    _gh_direct api user >/dev/null 2>&1
+  fi
+}
+
+# _probe_session decides whether the host can be reached and, if only a proxy
+# gets there, which proxy that was. Only then does it ask the authenticated
+# question. It leaves PROBE_RC, PROBE_OUT, PROBE_UNREACHABLE, PROXY_KIND and
+# GH_PROXY_USED for the caller, which is the only place a verdict is drawn.
+# _attempt_session [PROXY] makes one honest attempt: probe the route, and if
+# anything answers, ask the authenticated question through it. It succeeds when
+# the host gave a non-transport answer — a 401 counts, because the host spoke.
+# Everything else, including "curl says fine but the CLI cannot connect", is a
+# failure and lets the caller try the next route.
+_attempt_session() {
+  local proxy="${1:-}"
+
+  if ! _reachable "$proxy"; then return 1; fi
+
+  PROBE_RC=0
+  if [[ -n "$proxy" ]]; then
+    PROBE_OUT=$(_gh_via_proxy "$proxy" api user --jq .login 2>&1) || PROBE_RC=$?
+  else
+    PROBE_OUT=$(_gh_direct api user --jq .login 2>&1) || PROBE_RC=$?
+  fi
+
+  if (( PROBE_RC != 0 )) && [[ "$(_classify_api_failure "$PROBE_OUT")" == "unreachable" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# _probe_session decides whether the host can be reached and, if only a proxy
+# gets there, which proxy that was. Direct is tried first, always; a proxy is
+# consulted only after the direct route produced no answer at all. It leaves
+# PROBE_RC, PROBE_OUT, PROBE_UNREACHABLE, PROXY_KIND and GH_PROXY_USED for the
+# caller, which is the only place a verdict is drawn.
+_probe_session() {
+  PROBE_OUT=""
+  PROBE_RC=0
+  PROBE_UNREACHABLE=0
+  PROXY_KIND="$PROXY_NONE"
+  GH_PROXY_USED=""
+  GH_PROXY_SOURCE=""
+
+  if _attempt_session; then return 0; fi
+
+  if _proxy_candidate && _attempt_session "$GH_PROXY_URL"; then
+    PROXY_KIND="$GH_PROXY_SOURCE"
+    GH_PROXY_USED="$GH_PROXY_URL"
+    return 0
+  fi
+
+  GH_PROXY_USED="$GH_PROXY_URL"
+  PROXY_KIND="$PROXY_FAILED"
+  PROBE_UNREACHABLE=1
+  return 0
+}
+
 # _judge decides the verdict and leaves it in JUDGED_STATE. It is called, not
 # run inside a command substitution: its other job is to fill in the globals the
 # status line reports, and those would die with the subshell.
@@ -432,12 +576,26 @@ _judge() {
       "$GH_REJECTED" "$GH_BIN" "$GH_SOURCE" >&2
   fi
 
-  # The authenticated call is the authority. The status command never decides.
-  local combined="" rc=0
-  combined=$(_gh api user --jq .login 2>&1) || rc=$?
+  # Reachability first, then credentials. A proxy is consulted only when the
+  # direct attempt produced no answer at all — never because a token was
+  # refused, which retrying through a proxy could not fix.
+  _probe_session
 
-  if (( rc == 0 )); then
-    GH_USER=$(printf '%s\n' "$combined" | grep -Ex '[A-Za-z0-9-]+' | sed -n '1p') || GH_USER=""
+  if (( PROBE_UNREACHABLE )); then
+    if [[ -n "$GH_PROXY_USED" ]]; then
+      printf 'check: %s answered neither directly nor through the proxy %s.\n' "$GH_HOST" "$GH_PROXY_USED" >&2
+      printf '  that proxy came from %s; override it with HTTPS_PROXY=... or DSH_GH_PROXY=...\n' "$GH_PROXY_SOURCE" >&2
+    else
+      printf 'check: %s never answered, and no proxy was available to try.\n' "$GH_HOST" >&2
+      printf '  set HTTPS_PROXY or DSH_GH_PROXY if this machine needs one\n' >&2
+    fi
+    printf '  fix connectivity first; re-authenticating will not help\n' >&2
+    JUDGED_STATE="$STATE_UNREACHABLE"
+    return 0
+  fi
+
+  if (( PROBE_RC == 0 )); then
+    GH_USER=$(printf '%s\n' "$PROBE_OUT" | grep -Ex '[A-Za-z0-9-]+' | sed -n '1p') || GH_USER=""
     if [[ -z "$GH_USER" ]]; then
       printf 'check: the authenticated call succeeded but named no account; refusing to call that a usable session.\n' >&2
       JUDGED_STATE="$STATE_TOKEN_REJECTED"
@@ -451,13 +609,6 @@ _judge() {
       return 0
     fi
     JUDGED_STATE="$STATE_LOGGED_IN"
-    return 0
-  fi
-
-  if [[ "$(_classify_api_failure "$combined")" == "unreachable" ]]; then
-    printf 'check: %s never answered the authenticated call, so this is a network problem, not a login problem.\n' "$GH_HOST" >&2
-    printf '  fix connectivity first; re-authenticating will not help\n' >&2
-    JUDGED_STATE="$STATE_UNREACHABLE"
     return 0
   fi
 
@@ -478,9 +629,9 @@ _judge() {
 # empty values where unknown, so a reader splits on spaces once and never
 # parses prose. Human diagnostics must go to stderr instead.
 _emit_status() {
-  printf 'state=%s exe=%s version=%s source=%s host=%s minimum=%s user=%s scopes=%s\n' \
+  printf 'state=%s exe=%s version=%s source=%s host=%s minimum=%s user=%s scopes=%s proxy=%s\n' \
     "$1" "${GH_BIN:-}" "${GH_VERSION:-}" "${GH_SOURCE:-none}" \
-    "$GH_HOST" "$GH_MIN_VERSION" "${GH_USER:-}" "${GH_SCOPES:-}"
+    "$GH_HOST" "$GH_MIN_VERSION" "${GH_USER:-}" "${GH_SCOPES:-}" "${PROXY_KIND:-none}"
 }
 
 # check_mode is the seam: it never reads stdin, never prompts, never opens a
@@ -527,7 +678,7 @@ gh-login-wizard.sh — 让你本机的 GitHub CLI 处于可用的登录状态
   找到 gh → 判断版本 → 用一次真实认证请求判断这个主机能不能用。
   只问 github.com 一个主机，别的 host 的凭据坏掉不影响结论。
   stdout 恰好一行，空格分隔的 key=value，字段顺序固定:
-    state  exe  version  source  host  minimum  user  scopes
+    state  exe  version  source  host  minimum  user  scopes  proxy
   人类可读的原因一律走 stderr，所以 stdout 可以直接切分。
 
 state 取值（闭集，不会有别的）:
@@ -538,6 +689,13 @@ state 取值（闭集，不会有别的）:
   not-logged-in            这个主机上没有存凭据
   logged-in-other-account  有凭据且能用，但不是 --expect-user 要的账号
   token-rejected           存了凭据，但被主机拒绝
+
+proxy 取值（闭集）:
+  none        直连就能通
+  env         只有走环境里的 HTTPS_PROXY / HTTP_PROXY 才通
+  persisted   只有走之前记录进 .env 的 DSH_GH_PROXY 才通
+  default     只有走脚本里的文档化默认值才通
+  failed      直连和代理都不通（stderr 会点名试过哪个地址）
 
 退出码:
   0    可用
@@ -599,16 +757,28 @@ pause "按 Enter 继续"
 # ── Stage 2: 设备码登录 ───────────────────────────────────────────────────
 stage "设备码登录 · 浏览器授权"
 
-if curl -sS -m 8 -o /dev/null https://github.com 2>/dev/null; then
-  note "github.com 直连正常，本次不需要代理"
-else
-  PROXY="${HTTPS_PROXY:-http://127.0.0.1:7890}"
-  export HTTPS_PROXY="$PROXY" HTTP_PROXY="$PROXY" https_proxy="$PROXY" http_proxy="$PROXY"
-  note "github.com 直连超时，本次临时使用代理 $PROXY"
-  if ! curl -sS -m 10 -o /dev/null -x "$PROXY" https://github.com 2>/dev/null; then
-    warn "代理 $PROXY 也不通。若你本机不用代理，请先 unset HTTPS_PROXY 再重跑本脚本。"
-  fi
-fi
+# 可达性与代理决定都来自与 --check 同一个探测，向导不会和 --check 说出两套话。
+_probe_session
+case "$PROXY_KIND" in
+  "$PROXY_NONE")
+    note "github.com 直连正常，本次不需要代理"
+    ;;
+  "$PROXY_FAILED")
+    if [[ -n "$GH_PROXY_USED" ]]; then
+      warn "github.com 直连不通，代理 $GH_PROXY_USED 也不通"
+    else
+      warn "github.com 直连不通，也没有可试的代理"
+    fi
+    warn "把 HTTPS_PROXY 或 DSH_GH_PROXY 指对后重跑本脚本"
+    ;;
+  *)
+    export HTTPS_PROXY="$GH_PROXY_USED" HTTP_PROXY="$GH_PROXY_USED"
+    export https_proxy="$GH_PROXY_USED" http_proxy="$GH_PROXY_USED"
+    write_env DSH_GH_PROXY "$GH_PROXY_USED"
+    note "直连不通，本次走代理 $GH_PROXY_USED（来源：$PROXY_KIND）"
+    note "已记入 $ENV_FILE；新开的 shell 先执行: export HTTPS_PROXY='$GH_PROXY_USED'"
+    ;;
+esac
 
 step "接下来 gh 会打印一次性验证码，并尝试打开 https://github.com/login/device"
 step "在页面粘贴验证码 → Continue → Authorize GitHub CLI"

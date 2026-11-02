@@ -3,6 +3,7 @@
 #
 # Ticket 01: check-mode resolution (which gh, which version, how it was found).
 # Ticket 02: the auth verdict (can this host be used, and as whom).
+# Ticket 03: the proxy decision (direct first, name the source, record it).
 #
 # Only external behaviour is asserted: the exit code and the single status line
 # that --check puts on stdout. Nothing here reaches into the script's internals,
@@ -48,28 +49,31 @@ finish() {
 trap 'finish' EXIT
 
 SANDBOX=$(mktemp -d) || { printf 'mktemp failed\n' >&2; failed=1; exit 1; }
-mkdir -p "$SANDBOX/home" "$SANDBOX/work"
+mkdir -p "$SANDBOX/home" "$SANDBOX/work" "$SANDBOX/work2"
 printf 'MARKER=seeded\n' >"$SANDBOX/work/.env"
+printf "MARKER=seeded\nDSH_GH_PROXY='http://persisted.example:3128'\n" >"$SANDBOX/work2/.env"
 env_before=$(cat "$SANDBOX/work/.env")
 
-# A PATH lookup finds an executable, so the fake needs its executable bit. On
+# A PATH lookup finds an executable, so the fakes need their executable bit. On
 # NTFS there is no such bit and Git Bash decides by shebang instead, so a chmod
 # that appears to do nothing is expected there; on a POSIX checkout it is load
 # bearing, and a harness that cannot get it should say so instead of reporting
-# the fake as "not installed".
-if [[ ! -x "$fake_dir/gh" ]]; then
-  chmod +x "$fake_dir/gh" 2>/dev/null || true
-fi
-if [[ ! -x "$fake_dir/gh" ]] && [[ "$(uname -s 2>/dev/null)" != MINGW* ]] && [[ "$(uname -s 2>/dev/null)" != MSYS* ]]; then
-  printf 'tests/fake/gh is not executable and chmod did not help; run: chmod +x %s\n' "$fake_dir/gh" >&2
-  failed=1
-  exit 1
-fi
+# the fakes as missing.
+for f in gh curl; do
+  if [[ ! -x "$fake_dir/$f" ]]; then
+    chmod +x "$fake_dir/$f" 2>/dev/null || true
+  fi
+  if [[ ! -x "$fake_dir/$f" ]] && [[ "$(uname -s 2>/dev/null)" != MINGW* ]] && [[ "$(uname -s 2>/dev/null)" != MSYS* ]]; then
+    printf 'tests/fake/%s is not executable and chmod did not help; run: chmod +x %s\n' "$f" "$fake_dir/$f" >&2
+    failed=1
+    exit 1
+  fi
+done
 
 # No isolated tool sandbox. Symlinking bash out of its install directory breaks
 # MSYS (its loader cannot find the runtime beside a symlink), and wiping the
 # environment strips the platform variables MSYS needs to resolve paths at all.
-# So the harness keeps the real PATH and steers resolution by putting the fake
+# So the harness keeps the real PATH and steers resolution by putting the fakes
 # first — which is the thing the wizard actually consults.
 
 OUT=""
@@ -89,7 +93,12 @@ run_check() {
   # env, not assignment prefixes: words produced by an expansion are never
   # treated as assignments, so "VAR=VAL" coming out of an array would be taken
   # as the command name. env also keeps the platform variables intact.
+  #
+  # The proxy variables are cleared so the harness's own environment cannot leak
+  # in and silently change which proxy the wizard decides to use. A case that
+  # wants one passes it after these and wins, because env applies in order.
   out=$( cd "$workdir" && env PATH="$path_prefix" HOME="$SANDBOX/home" \
+           HTTPS_PROXY= https_proxy= HTTP_PROXY= http_proxy= \
            ${extra[@]+"${extra[@]}"} bash "$wizard" --check ${args[@]+"${args[@]}"} </dev/null 2>"$errf" )
   RC=$?
   OUT="$out"
@@ -112,15 +121,16 @@ existing_candidates() {
 section() { printf '\n%s\n' "$1"; }
 
 HEAD="host=github.com minimum=2.40.0"
+FP="$fake_dir:$REAL_PATH"
 
 # ── A usable CLI, judged by the API ─────────────────────────────────────────
 section "a usable CLI"
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=ready --
-expected="state=logged-in exe=$fake_dir/gh version=2.79.0 source=path $HEAD user=octocat scopes=gist,read:org,repo"
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready --
+expected="state=logged-in exe=$fake_dir/gh version=2.79.0 source=path $HEAD user=octocat scopes=gist,read:org,repo proxy=none"
 if [[ $RC -eq 0 ]]; then pass "exits 0"; else fail "exits 0" "got $RC; stderr: $ERR"; fi
 if [[ "$OUT" == "$expected" ]]; then pass "one status line, fixed field order"; else fail "one status line, fixed field order" "expected: $expected / got: $OUT"; fi
 
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=ready -- --expect-user octocat
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready -- --expect-user octocat
 if [[ $RC -eq 0 && "$OUT" == *" user=octocat "* ]]; then
   pass "--expect-user matching the actual account passes"
 else
@@ -129,16 +139,16 @@ fi
 
 # ── A CLI that is too old ───────────────────────────────────────────────────
 section "too old / unparseable"
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=old --
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=old --
 if [[ $RC -eq 11 ]]; then pass "old version exits 11"; else fail "old version exits 11" "got $RC"; fi
-if [[ "$OUT" == "state=gh-too-old exe=$fake_dir/gh version=2.1.0 source=path $HEAD user= scopes=" ]]; then
+if [[ "$OUT" == "state=gh-too-old exe=$fake_dir/gh version=2.1.0 source=path $HEAD user= scopes= proxy=none" ]]; then
   pass "old version reported in the status line"
 else
   fail "old version reported in the status line" "got: $OUT"
 fi
 
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=garbled --
-if [[ $RC -eq 11 && "$OUT" == "state=gh-too-old exe=$fake_dir/gh version= source=path $HEAD user= scopes=" ]]; then
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=garbled --
+if [[ $RC -eq 11 && "$OUT" == "state=gh-too-old exe=$fake_dir/gh version= source=path $HEAD user= scopes= proxy=none" ]]; then
   pass "unparseable version is too old, never usable"
 else
   fail "unparseable version is too old, never usable" "rc=$RC out=$OUT"
@@ -154,16 +164,16 @@ fi
 section "resolution order"
 cp "$fake_dir/gh" "$SANDBOX/custom-gh"
 chmod +x "$SANDBOX/custom-gh"
-run_check "$REAL_PATH" "$SANDBOX/work" "DSH_GH_PATH=$SANDBOX/custom-gh" FAKE_GH_MODE=ready --
-if [[ $RC -eq 0 && "$OUT" == "state=logged-in exe=$SANDBOX/custom-gh version=2.79.0 source=env:DSH_GH_PATH $HEAD user=octocat scopes=gist,read:org,repo" ]]; then
+run_check "$FP" "$SANDBOX/work" "DSH_GH_PATH=$SANDBOX/custom-gh" FAKE_GH_MODE=ready --
+if [[ $RC -eq 0 && "$OUT" == "state=logged-in exe=$SANDBOX/custom-gh version=2.79.0 source=env:DSH_GH_PATH $HEAD user=octocat scopes=gist,read:org,repo proxy=none" ]]; then
   pass "DSH_GH_PATH is used, and says so"
 else
   fail "DSH_GH_PATH is used, and says so" "rc=$RC out=$OUT"
 fi
 
 printf 'not executable\n' >"$SANDBOX/broken-gh"
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" "DSH_GH_PATH=$SANDBOX/broken-gh" FAKE_GH_MODE=ready --
-if [[ $RC -eq 0 && "$OUT" == "state=logged-in exe=$fake_dir/gh version=2.79.0 source=path $HEAD user=octocat scopes=gist,read:org,repo" ]]; then
+run_check "$FP" "$SANDBOX/work" "DSH_GH_PATH=$SANDBOX/broken-gh" FAKE_GH_MODE=ready --
+if [[ $RC -eq 0 && "$OUT" == "state=logged-in exe=$fake_dir/gh version=2.79.0 source=path $HEAD user=octocat scopes=gist,read:org,repo proxy=none" ]]; then
   pass "a broken DSH_GH_PATH falls through to PATH"
 else
   fail "a broken DSH_GH_PATH falls through to PATH" "rc=$RC out=$OUT"
@@ -205,21 +215,21 @@ section "auth verdict"
 
 # "another account" only means anything relative to an expectation. With no
 # expectation, a session that works is a session that works — whoever it is.
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=other-account --
-if [[ $RC -eq 0 && "$OUT" == "state=logged-in exe=$fake_dir/gh version=2.79.0 source=path $HEAD user=monalisa scopes=gist,read:org,repo" ]]; then
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=other-account --
+if [[ $RC -eq 0 && "$OUT" == "state=logged-in exe=$fake_dir/gh version=2.79.0 source=path $HEAD user=monalisa scopes=gist,read:org,repo proxy=none" ]]; then
   pass "a usable session as any account is logged-in when nothing was expected"
 else
   fail "a usable session as any account is logged-in when nothing was expected" "rc=$RC out=$OUT"
 fi
 
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=other-account -- --expect-user octocat
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=other-account -- --expect-user octocat
 if [[ $RC -eq 14 && "$OUT" == *" user=monalisa "* ]]; then
   pass "the wrong expected account exits 14 and names the real one"
 else
   fail "the wrong expected account exits 14 and names the real one" "rc=$RC out=$OUT"
 fi
 
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=other-account -- --expect-user monalisa
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=other-account -- --expect-user monalisa
 if [[ $RC -eq 0 && "$OUT" == state=logged-in* ]]; then
   pass "--expect-user matching the other account passes"
 else
@@ -227,14 +237,14 @@ else
 fi
 
 # The cross-check: the status command claims success while the API refuses.
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=token-rejected --
-if [[ $RC -eq 15 && "$OUT" == "state=token-rejected exe=$fake_dir/gh version=2.79.0 source=path $HEAD user= scopes=" ]]; then
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=token-rejected --
+if [[ $RC -eq 15 && "$OUT" == "state=token-rejected exe=$fake_dir/gh version=2.79.0 source=path $HEAD user= scopes= proxy=none" ]]; then
   pass "a rejected token is never reported as success"
 else
   fail "a rejected token is never reported as success" "rc=$RC out=$OUT"
 fi
 
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=not-logged-in --
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=not-logged-in --
 if [[ $RC -eq 13 && "$OUT" == state=not-logged-in* ]]; then
   pass "no stored credential is not-logged-in, not rejected"
 else
@@ -243,7 +253,7 @@ fi
 
 # The other cross-check: a cached credential plus a dead network must not be
 # mistaken for a rejected credential.
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=unreachable --
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=unreachable --
 if [[ $RC -eq 12 && "$OUT" == state=host-unreachable* ]]; then
   pass "an unanswered call is a network problem, not a credential problem"
 else
@@ -252,7 +262,7 @@ fi
 
 # A second host with a broken credential must not affect this one. The fixture
 # is hostile when unscoped, so this is only green if the wizard always scopes.
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=multi-host-broken --
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=multi-host-broken --
 if [[ $RC -eq 0 && "$OUT" == state=logged-in*" user=octocat "* ]]; then
   pass "another host's broken credential does not leak into the verdict"
 else
@@ -264,6 +274,56 @@ else
   pass "the fixture is hostile when unscoped"
 fi
 
+# ── The proxy decision ──────────────────────────────────────────────────────
+section "proxy"
+
+# Direct works: no proxy is consulted, and the field says so. (Also asserted in
+# the first section; kept here so the three-way branch is visible in one place.)
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready FAKE_CURL_MODE=ok --
+if [[ $RC -eq 0 && "$OUT" == *" proxy=none" ]]; then
+  pass "a reachable host needs no proxy"
+else
+  fail "a reachable host needs no proxy" "rc=$RC out=$OUT"
+fi
+
+# Direct dead, proxy from the environment works.
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready FAKE_CURL_MODE=direct-down \
+  "HTTPS_PROXY=http://envproxy.example:8080" --
+if [[ $RC -eq 0 && "$OUT" == *" proxy=env" && "$OUT" == *"user=octocat"* ]]; then
+  pass "the environment's proxy is used and named as such"
+else
+  fail "the environment's proxy is used and named as such" "rc=$RC out=$OUT"
+fi
+
+# Direct dead, no environment proxy: the documented default is tried and named.
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready FAKE_CURL_MODE=direct-down --
+if [[ $RC -eq 0 && "$OUT" == *" proxy=default" ]]; then
+  pass "the documented default is tried, and said to be the default"
+else
+  fail "the documented default is tried, and said to be the default" "rc=$RC out=$OUT"
+fi
+
+# Direct dead, but a previous run recorded a proxy: that one wins over guessing.
+run_check "$FP" "$SANDBOX/work2" FAKE_GH_MODE=ready FAKE_CURL_MODE=direct-down --
+if [[ $RC -eq 0 && "$OUT" == *" proxy=persisted" ]]; then
+  pass "a recorded proxy is reused instead of re-derived"
+else
+  fail "a recorded proxy is reused instead of re-derived" "rc=$RC out=$OUT"
+fi
+
+# Nothing works: the message must name what was tried and how to change it.
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready FAKE_CURL_MODE=all-down --
+if [[ $RC -eq 12 && "$OUT" == *" proxy=failed" ]]; then
+  pass "both routes dead is host-unreachable, not a login failure"
+else
+  fail "both routes dead is host-unreachable, not a login failure" "rc=$RC out=$OUT"
+fi
+if [[ "$ERR" == *"http://127.0.0.1:7890"* && "$ERR" == *"DSH_GH_PROXY"* ]]; then
+  pass "the failure names the proxy that was tried and how to override it"
+else
+  fail "the failure names the proxy that was tried and how to override it" "stderr: $ERR"
+fi
+
 # ── Nothing installed anywhere ──────────────────────────────────────────────
 section "no CLI at all"
 leaks=$(existing_candidates)
@@ -273,7 +333,7 @@ if [[ -n "$leaks" || -n "$path_gh" ]]; then
 else
   run_check "$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=ready --
   if [[ $RC -eq 10 ]]; then pass "missing CLI exits 10"; else fail "missing CLI exits 10" "got $RC"; fi
-  if [[ "$OUT" == "state=gh-missing exe= version= source=none $HEAD user= scopes=" ]]; then
+  if [[ "$OUT" == "state=gh-missing exe= version= source=none $HEAD user= scopes= proxy=none" ]]; then
     pass "missing CLI status line keeps the field order"
   else
     fail "missing CLI status line keeps the field order" "got: $OUT"
@@ -289,14 +349,14 @@ fi
 
 # ── Arguments ───────────────────────────────────────────────────────────────
 section "arguments"
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=ready -- unexpected
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready -- unexpected
 if [[ $RC -eq 2 && -z "$OUT" ]]; then
   pass "an unexpected argument exits 2 without polluting stdout"
 else
   fail "an unexpected argument exits 2 without polluting stdout" "rc=$RC out=$OUT"
 fi
 
-run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" FAKE_GH_MODE=ready -- --expect-user
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready -- --expect-user
 if [[ $RC -eq 2 && -z "$OUT" ]]; then
   pass "--expect-user without a value exits 2 without polluting stdout"
 else
@@ -305,14 +365,15 @@ fi
 
 # ── Nothing is written ──────────────────────────────────────────────────────
 section "writes nothing"
-for m in ready token-rejected unreachable; do
-  run_check "$fake_dir:$REAL_PATH" "$SANDBOX/work" "FAKE_GH_MODE=$m" --
-done
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready FAKE_CURL_MODE=direct-down --
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=token-rejected --
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=unreachable --
+run_check "$FP" "$SANDBOX/work" FAKE_GH_MODE=ready FAKE_CURL_MODE=all-down --
 env_after=$(cat "$SANDBOX/work/.env")
 if [[ "$env_after" == "$env_before" ]]; then
-  pass "the persisted value file is untouched"
+  pass "the persisted value file is untouched, proxy decisions included"
 else
-  fail "the persisted value file is untouched" "before: $env_before / after: $env_after"
+  fail "the persisted value file is untouched, proxy decisions included" "before: $env_before / after: $env_after"
 fi
 if [[ -z "$(ls -A "$SANDBOX/home")" ]]; then
   pass "the credential-store home stays empty"
