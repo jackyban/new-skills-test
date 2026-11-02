@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# No-op browser shim: the interactive flow calls a URL opener, and a test run
+# must never open a window. Shadowing the opener by name is enough.
+exit 0

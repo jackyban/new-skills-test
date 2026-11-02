@@ -23,6 +23,40 @@ if [[ "$mode" == "multi-host-broken" ]] && [[ "${1:-}" == "auth" ]] && [[ "${2:-
   exit 1
 fi
 
+# login-flow is the only mode with memory: a state file the fake itself creates
+# when "auth login" runs. It exists so the interactive path can be driven end to
+# end and observed going from "nothing works" to "logged in". The wizard never
+# touches this file.
+if [[ "$mode" == "login-flow" ]]; then
+  state_file="${FAKE_GH_STATE:-}"
+  logged_in=0
+  [[ -n "$state_file" && -f "$state_file" ]] && logged_in=1
+  case "${1:-}" in
+    --version) printf 'gh version 2.79.0 (2025-06-01)\n'; exit 0 ;;
+    auth)
+      case "${2:-}" in
+        login)  [[ -n "$state_file" ]] && : >"$state_file"; exit 0 ;;
+        token)
+          if (( logged_in )); then printf 'gho_fake_token\n'; exit 0; fi
+          printf 'no oauth token found for github.com\n' >&2; exit 1
+          ;;
+        status)
+          if (( logged_in )); then
+            printf 'github.com\n  - Logged in to github.com account octocat (keyring)\n  - Token scopes: '\''repo'\''\n'
+            exit 0
+          fi
+          printf 'You are not logged into any GitHub hosts.\n' >&2; exit 1
+          ;;
+      esac
+      ;;
+    api)
+      if (( logged_in )); then printf 'octocat\n'; exit 0; fi
+      printf 'gh: To get started with GitHub CLI, please run:  gh auth login\n' >&2; exit 4
+      ;;
+  esac
+  exit 64
+fi
+
 case "${1:-}" in
   --version)
     case "$mode" in

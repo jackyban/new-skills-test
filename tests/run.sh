@@ -105,6 +105,22 @@ run_check() {
   ERR=$(cat "$errf")
 }
 
+
+# run_interactive PATH_PREFIX WORKDIR MODE STDIN_TEXT [STATE_FILE]
+# The interactive flow is driven with piped input and fakes, so it is exercised
+# as a user would see it — the whole script, not a function plucked out of it.
+run_interactive() {
+  local path_prefix="$1" workdir="$2" mode="$3" input="$4" state_file="${5:-}"
+  local errf="$SANDBOX/stderr-i"
+  OUT=$( printf '%s' "$input" | ( cd "$workdir" && \
+           env PATH="$path_prefix" HOME="$SANDBOX/home" \
+             HTTPS_PROXY= https_proxy= HTTP_PROXY= http_proxy= \
+             FAKE_GH_MODE="$mode" FAKE_GH_STATE="$state_file" \
+             bash "$wizard" 2>"$errf" ) )
+  RC=$?
+  ERR=$(cat "$errf")
+}
+
 # Absolute locations the wizard falls back to. If one of these exists on this
 # machine, a "not installed anywhere" case cannot be simulated honestly, so the
 # case is skipped by name instead of faked green.
@@ -361,6 +377,70 @@ if [[ $RC -eq 2 && -z "$OUT" ]]; then
   pass "--expect-user without a value exits 2 without polluting stdout"
 else
   fail "--expect-user without a value exits 2 without polluting stdout" "rc=$RC out=$OUT"
+fi
+
+# ── The interactive flow ────────────────────────────────────────────────────
+section "interactive flow"
+mkdir -p "$SANDBOX/work3"
+
+# Already usable: no login, no browser, and a summary that names the account.
+run_interactive "$FP" "$SANDBOX/work3" ready $'\n\n\n'
+if [[ $RC -eq 0 && "$OUT" == *"已经是登录状态"* && "$OUT" == *"账号:"*"octocat"* ]]; then
+  pass "an already-usable session finishes without logging in, and summarises"
+else
+  fail "an already-usable session finishes without logging in, and summarises" "rc=$RC"
+fi
+if [[ "$OUT" == *"gh auth login"* ]]; then
+  fail "no login is attempted when the session is already good" "output mentioned a login"
+else
+  pass "no login is attempted when the session is already good"
+fi
+
+if [[ "$OUT" == *"要改用另一个账号吗？"* ]]; then
+  pass "the current account is shown with an offer to switch"
+else
+  fail "the current account is shown with an offer to switch" "no offer in the output"
+fi
+
+if [[ "$OUT" == *"主机:"*"github.com"* && "$OUT" == *"协议:      https"* && "$OUT" == *"代理:"* ]]; then
+  pass "the summary reports host, protocol and proxy requirement"
+else
+  fail "the summary reports host, protocol and proxy requirement" "summary incomplete"
+fi
+
+# A login run: the fixture starts with no credential and grants one when
+# "auth login" is invoked, so the two halves really are different states.
+state="$SANDBOX/ghstate"
+rm -f "$state"
+run_interactive "$FP" "$SANDBOX/work3" login-flow $'\n\n\n\n\n' "$state"
+if [[ $RC -eq 0 && "$OUT" == *"已验证：octocat @ github.com"* ]]; then
+  pass "a login run ends on a live verification"
+else
+  fail "a login run ends on a live verification" "rc=$RC"
+fi
+if [[ "$OUT" == *"账号:"*"octocat"* ]]; then
+  pass "the summary names the account it ended up as"
+else
+  fail "the summary names the account it ended up as" "output did not name octocat"
+fi
+if [[ -f "$state" ]]; then
+  pass "the login command was actually invoked"
+else
+  fail "the login command was actually invoked" "the fixture never saw auth login"
+fi
+if [[ "$OUT" == *"写入文件:  无"* ]]; then
+  pass "the summary says nothing was written when nothing needed writing"
+else
+  fail "the summary says nothing was written when nothing needed writing" "no such line"
+fi
+
+# Nobody is there to press Enter. The run must stop and say how to get further,
+# not walk on and then report a login failure that never happened.
+run_interactive "$FP" "$SANDBOX/work3" not-logged-in "" ""
+if [[ $RC -eq 130 && "$OUT" == *"读不到输入"* && "$OUT" == *"--check"* ]]; then
+  pass "an unreadable prompt stops the run and says how to get further"
+else
+  fail "an unreadable prompt stops the run and says how to get further" "rc=$RC"
 fi
 
 # ── Nothing is written ──────────────────────────────────────────────────────

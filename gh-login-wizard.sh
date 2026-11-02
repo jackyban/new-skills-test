@@ -283,7 +283,7 @@ _exit_for_state() {
     "$STATE_OTHER_ACCOUNT")  return "$EXIT_OTHER_ACCOUNT" ;;
     "$STATE_TOKEN_REJECTED") return "$EXIT_TOKEN_REJECTED" ;;
     *)
-      printf 'check: internal error: unknown state "%s"\n' "$1" >&2
+      printf 'gh-login-wizard: internal error: unknown state "%s"\n' "$1" >&2
       return "$EXIT_INTERNAL"
       ;;
   esac
@@ -546,9 +546,9 @@ _judge() {
 
   if ! _resolve_gh; then
     if [[ -n "$GH_REJECTED" ]]; then
-      printf 'check: no usable gh. %s; nothing on PATH or in the usual install locations either.\n' "$GH_REJECTED" >&2
+      printf 'gh-login-wizard: no usable gh. %s; nothing on PATH or in the usual install locations either.\n' "$GH_REJECTED" >&2
     else
-      printf 'check: no usable gh on PATH or in the usual install locations.\n' >&2
+      printf 'gh-login-wizard: no usable gh on PATH or in the usual install locations.\n' >&2
     fi
     printf '  install https://cli.github.com, or point DSH_GH_PATH at the executable\n' >&2
     JUDGED_STATE="$STATE_GH_MISSING"
@@ -558,13 +558,13 @@ _judge() {
   GH_VERSION=$(_gh_version_of "$GH_BIN")
 
   if [[ -z "$GH_VERSION" ]]; then
-    printf 'check: %s did not report a parseable version; treating it as too old.\n' "$GH_BIN" >&2
+    printf 'gh-login-wizard: %s did not report a parseable version; treating it as too old.\n' "$GH_BIN" >&2
     JUDGED_STATE="$STATE_GH_TOO_OLD"
     return 0
   fi
 
   if ! _version_ge "$GH_VERSION" "$GH_MIN_VERSION"; then
-    printf 'check: gh %s is older than the required %s (found via %s).\n' \
+    printf 'gh-login-wizard: gh %s is older than the required %s (found via %s).\n' \
       "$GH_VERSION" "$GH_MIN_VERSION" "$GH_SOURCE" >&2
     printf '  upgrade from https://cli.github.com\n' >&2
     JUDGED_STATE="$STATE_GH_TOO_OLD"
@@ -572,7 +572,7 @@ _judge() {
   fi
 
   if [[ -n "$GH_REJECTED" ]]; then
-    printf 'check: warning: %s was rejected; using %s (via %s).\n' \
+    printf 'gh-login-wizard: warning: %s was rejected; using %s (via %s).\n' \
       "$GH_REJECTED" "$GH_BIN" "$GH_SOURCE" >&2
   fi
 
@@ -583,10 +583,10 @@ _judge() {
 
   if (( PROBE_UNREACHABLE )); then
     if [[ -n "$GH_PROXY_USED" ]]; then
-      printf 'check: %s answered neither directly nor through the proxy %s.\n' "$GH_HOST" "$GH_PROXY_USED" >&2
+      printf 'gh-login-wizard: %s answered neither directly nor through the proxy %s.\n' "$GH_HOST" "$GH_PROXY_USED" >&2
       printf '  that proxy came from %s; override it with HTTPS_PROXY=... or DSH_GH_PROXY=...\n' "$GH_PROXY_SOURCE" >&2
     else
-      printf 'check: %s never answered, and no proxy was available to try.\n' "$GH_HOST" >&2
+      printf 'gh-login-wizard: %s never answered, and no proxy was available to try.\n' "$GH_HOST" >&2
       printf '  set HTTPS_PROXY or DSH_GH_PROXY if this machine needs one\n' >&2
     fi
     printf '  fix connectivity first; re-authenticating will not help\n' >&2
@@ -597,13 +597,13 @@ _judge() {
   if (( PROBE_RC == 0 )); then
     GH_USER=$(printf '%s\n' "$PROBE_OUT" | grep -Ex '[A-Za-z0-9-]+' | sed -n '1p') || GH_USER=""
     if [[ -z "$GH_USER" ]]; then
-      printf 'check: the authenticated call succeeded but named no account; refusing to call that a usable session.\n' >&2
+      printf 'gh-login-wizard: the authenticated call succeeded but named no account; refusing to call that a usable session.\n' >&2
       JUDGED_STATE="$STATE_TOKEN_REJECTED"
       return 0
     fi
     GH_SCOPES=$(_read_scopes)
     if [[ -n "$EXPECT_USER" && "$GH_USER" != "$EXPECT_USER" ]]; then
-      printf 'check: signed in as %s, but %s was expected.\n' "$GH_USER" "$EXPECT_USER" >&2
+      printf 'gh-login-wizard: signed in as %s, but %s was expected.\n' "$GH_USER" "$EXPECT_USER" >&2
       printf '  switch with: gh auth switch --hostname %s --user %s\n' "$GH_HOST" "$EXPECT_USER" >&2
       JUDGED_STATE="$STATE_OTHER_ACCOUNT"
       return 0
@@ -613,13 +613,13 @@ _judge() {
   fi
 
   if _has_credential; then
-    printf 'check: a credential is stored for %s, but %s refused it.\n' "$GH_HOST" "$GH_HOST" >&2
+    printf 'gh-login-wizard: a credential is stored for %s, but %s refused it.\n' "$GH_HOST" "$GH_HOST" >&2
     printf '  re-authenticate with: gh auth login --hostname %s --git-protocol https --web\n' "$GH_HOST" >&2
     JUDGED_STATE="$STATE_TOKEN_REJECTED"
     return 0
   fi
 
-  printf 'check: no credential is stored for %s.\n' "$GH_HOST" >&2
+  printf 'gh-login-wizard: no credential is stored for %s.\n' "$GH_HOST" >&2
   printf '  log in with: gh auth login --hostname %s --git-protocol https --web\n' "$GH_HOST" >&2
   JUDGED_STATE="$STATE_NOT_LOGGED_IN"
   return 0
@@ -644,7 +644,7 @@ check_mode() {
       --expect-user)
         shift
         if (( $# == 0 )); then
-          printf 'check: --expect-user needs an account name\n' >&2
+          printf 'gh-login-wizard: --expect-user needs an account name\n' >&2
           return "$EXIT_USAGE"
         fi
         EXPECT_USER="$1"
@@ -652,7 +652,7 @@ check_mode() {
         ;;
       --expect-user=*) EXPECT_USER="${1#*=}"; shift ;;
       *)
-        printf 'check: unexpected argument: %s\n' "$1" >&2
+        printf 'gh-login-wizard: unexpected argument: %s\n' "$1" >&2
         return "$EXIT_USAGE"
         ;;
     esac
@@ -710,6 +710,200 @@ proxy 取值（闭集）:
 USAGE
 }
 
+# ──────────────────────────────────────────────────────────────────────────
+# The human flow: a presenter over the verdict.
+#
+# Nothing here decides anything. It asks _judge — the same judgement check mode
+# uses — and then says, in the operator's language, what that verdict means for
+# the person at the terminal. A fix in the judgement therefore cannot leave the
+# wizard telling a different story from --check.
+# ──────────────────────────────────────────────────────────────────────────
+
+# _title opens a one-stage run without the library banner's "Ready to start?"
+# prompt, which is pure noise when the answer is already "nothing to do".
+_title() {
+  printf '\n%s%s  %s%s\n\n' "$BOLD" "$BLUE" "$1" "$RESET"
+}
+
+# _pause is the library's pause with one difference: end-of-input is not the
+# same as pressing Enter. A wizard that walks on after the terminal closes has
+# failed at the only thing it exists for.
+_pause() {
+  printf '  %s%s%s ' "$DIM" "${1:-按 Enter 继续}" "$RESET"
+  local line=""
+  if ! IFS= read -r line; then
+    printf '\n'
+    _no_input
+  fi
+}
+
+# _no_input is the single answer to "nobody is there to press Enter". It covers
+# both a terminal that closed mid-flow and a run whose input was redirected,
+# and it always says how to get further instead of leaving the operator stuck.
+_no_input() {
+  warn "读不到输入：授权未完成，重跑本脚本即可再试一次"
+  say "通过管道或重定向运行的，Windows 的 Git Bash 里用: winpty bash $0"
+  say "只想确认状态而不交互: $0 --check"
+  exit 130
+}
+
+# _interrupted is what Ctrl-C means here: not completed, try again. Never a
+# trace and never a half-written summary.
+_interrupted() {
+  printf '\n'
+  warn "已中断：授权未完成，重跑本脚本即可再试一次"
+  exit 130
+}
+
+# _proxy_words renders the closed proxy vocabulary for a human.
+_proxy_words() {
+  case "$PROXY_KIND" in
+    "$PROXY_NONE")      printf '不需要' ;;
+    "$PROXY_ENV")       printf '%s（来自环境变量）' "$GH_PROXY_USED" ;;
+    "$PROXY_PERSISTED") printf '%s（之前记录的）' "$GH_PROXY_USED" ;;
+    "$PROXY_DEFAULT")   printf '%s（默认值）' "$GH_PROXY_USED" ;;
+    *)                  printf '不可用' ;;
+  esac
+}
+
+# _summary always answers the same five questions. A summary that cannot name an
+# account is not a success summary, so it is never printed as one.
+_summary() {
+  printf '\n'
+  note "主机:      $GH_HOST"
+  note "账号:      ${GH_USER:-未确认}"
+  note "协议:      https"
+  note "代理:      $(_proxy_words)"
+  if (( ${#WRITTEN_ENV[@]} )); then
+    note "写入文件:  $ENV_FILE ${WRITTEN_ENV[*]}"
+  else
+    note "写入文件:  无"
+  fi
+}
+
+# _explain_blocked says, in the script's own voice, why nothing can proceed.
+# The technical reason already went to stderr from the judgement.
+_explain_blocked() {
+  case "$JUDGED_STATE" in
+    "$STATE_GH_MISSING")
+      say "找不到 gh 可执行文件。"
+      say "装好后重跑本脚本，或设 DSH_GH_PATH 指向它的可执行文件。"
+      ;;
+    "$STATE_GH_TOO_OLD")
+      say "gh 版本低于 $GH_MIN_VERSION。"
+      say "升级后重跑：https://cli.github.com"
+      ;;
+    "$STATE_UNREACHABLE")
+      say "$GH_HOST 没有应答。"
+      say "先解决网络或代理，再重跑本脚本。重新登录解决不了这个问题。"
+      ;;
+  esac
+}
+
+_interactive() {
+  # There is deliberately no upfront "is this a terminal?" gate. The hazard is
+  # not the absence of a TTY, it is walking on after the input has gone — so
+  # every prompt reports at the moment it cannot read, through _no_input. That
+  # also keeps the flow drivable from a pipe, which is how it gets verified.
+
+  # Ctrl-C must read as "not completed", never as a mysterious death.
+  trap '_interrupted' INT TERM
+
+  # One judgement, shared with --check. Everything below only renders it.
+  _judge
+
+  case "$JUDGED_STATE" in
+    "$STATE_GH_MISSING"|"$STATE_GH_TOO_OLD"|"$STATE_UNREACHABLE")
+      TOTAL_STAGES=1
+      _title "GitHub CLI 登录"
+      stage "前置检查 · 现在做不到"
+      _explain_blocked
+      return 1
+      ;;
+
+    "$STATE_LOGGED_IN")
+      TOTAL_STAGES=1
+      _title "GitHub CLI 登录"
+      stage "检查 · 已经可用"
+      say "已经是登录状态，不需要重复登录。"
+      note "可执行文件：$GH_BIN"
+      note "版本：$GH_VERSION"
+      if confirm "要改用另一个账号吗？"; then
+        local wanted=""
+        ask wanted "输入要切换到的账号名"
+        if [[ -n "$wanted" ]]; then
+          _gh auth switch --hostname "$GH_HOST" --user "$wanted" \
+            || warn "切换没有成功，当前仍是 $GH_USER"
+          _judge
+        fi
+      fi
+      _summary
+      finish
+      return 0
+      ;;
+
+    *)
+      # not-logged-in or token-rejected: the only path that runs a login.
+      TOTAL_STAGES=3
+      banner "GitHub CLI 登录"
+
+      stage "当前状态 · 需要登录"
+      case "$JUDGED_STATE" in
+        "$STATE_NOT_LOGGED_IN") say "这台机器还没有为 $GH_HOST 存过凭据。" ;;
+        "$STATE_TOKEN_REJECTED") say "存过凭据，但 $GH_HOST 拒绝了它。" ;;
+      esac
+      note "可执行文件：$GH_BIN"
+      note "版本：$GH_VERSION"
+      _pause "按 Enter 继续"
+
+      stage "设备码登录 · 浏览器授权"
+      case "$PROXY_KIND" in
+        "$PROXY_NONE")
+          note "$GH_HOST 直连正常，本次不需要代理"
+          ;;
+        "$PROXY_FAILED")
+          if [[ -n "$GH_PROXY_USED" ]]; then
+            warn "直连不通，代理 $GH_PROXY_USED 也不通"
+          else
+            warn "直连不通，也没有可试的代理"
+          fi
+          warn "把 HTTPS_PROXY 或 DSH_GH_PROXY 指对后重跑本脚本"
+          _pause "按 Enter 仍然试一次"
+          ;;
+        *)
+          export HTTPS_PROXY="$GH_PROXY_USED" HTTP_PROXY="$GH_PROXY_USED"
+          export https_proxy="$GH_PROXY_USED" http_proxy="$GH_PROXY_USED"
+          write_env DSH_GH_PROXY "$GH_PROXY_USED"
+          note "直连不通，本次走代理 $GH_PROXY_USED（来源：$PROXY_KIND）"
+          note "已记入 $ENV_FILE；新开的 shell 先执行: export HTTPS_PROXY='$GH_PROXY_USED'"
+          ;;
+      esac
+
+      step "接下来 gh 会打印一次性验证码"
+      step "在页面粘贴验证码 → Continue → Authorize GitHub CLI"
+      step "协议选 HTTPS，SSH 密钥问题会被跳过"
+      open_url "https://github.com/login/device"
+      _pause "准备好在浏览器里操作后，按 Enter 启动 gh auth login"
+
+      _gh auth login --hostname "$GH_HOST" --git-protocol https --web --skip-ssh-key \
+        || warn "gh auth login 未正常结束（可能取消、超时或网络中断）"
+
+      stage "验证 · 真实调用"
+      _judge
+      if [[ "$JUDGED_STATE" == "$STATE_LOGGED_IN" && -n "$GH_USER" ]]; then
+        say "已验证：$GH_USER @ $GH_HOST"
+        _summary
+        finish
+        return 0
+      fi
+      warn "仍未完成：$JUDGED_STATE"
+      _explain_blocked
+      say "重跑本脚本即可再试一次。"
+      return 1
+      ;;
+  esac
+}
+
 run_wizard() {
 
 # ── Entry dispatch ────────────────────────────────────────────────────────
@@ -722,86 +916,7 @@ case "${1:-}" in
   --*)       printf 'unknown option: %s\n\n' "$1" >&2; usage >&2; return "$EXIT_USAGE" ;;
 esac
 
-TOTAL_STAGES=3
-
-banner "GitHub CLI 登录"
-
-# ── Stage 1: 前置检查 ─────────────────────────────────────────────────────
-stage "前置检查 · gh 是否可用、是否已登录"
-
-if ! command -v gh >/dev/null 2>&1 && [[ -x "/c/Program Files/GitHub CLI/gh.exe" ]]; then
-  export PATH="/c/Program Files/GitHub CLI:$PATH"
-  note "已把 C:\\Program Files\\GitHub CLI 临时加入本次 PATH"
-fi
-
-if ! command -v gh >/dev/null 2>&1; then
-  warn "找不到 gh 可执行文件"
-  say "预期位置：C:\\Program Files\\GitHub CLI\\gh.exe"
-  say "把该目录加入 PATH 后重开 Git Bash，或设置 DSH_GH_PATH 指向这个 exe。"
-  exit 1
-fi
-
-say "gh 版本：$(gh --version | head -n1)"
-note "可执行文件：$(command -v gh)"
-
-if gh auth status >/dev/null 2>&1; then
-  say "当前已经是登录状态，不需要重复登录："
-  gh auth status || true
-  finish
-  return 0
-fi
-
-say "当前未登录，下一步完成设备码授权。"
-pause "按 Enter 继续"
-
-# ── Stage 2: 设备码登录 ───────────────────────────────────────────────────
-stage "设备码登录 · 浏览器授权"
-
-# 可达性与代理决定都来自与 --check 同一个探测，向导不会和 --check 说出两套话。
-_probe_session
-case "$PROXY_KIND" in
-  "$PROXY_NONE")
-    note "github.com 直连正常，本次不需要代理"
-    ;;
-  "$PROXY_FAILED")
-    if [[ -n "$GH_PROXY_USED" ]]; then
-      warn "github.com 直连不通，代理 $GH_PROXY_USED 也不通"
-    else
-      warn "github.com 直连不通，也没有可试的代理"
-    fi
-    warn "把 HTTPS_PROXY 或 DSH_GH_PROXY 指对后重跑本脚本"
-    ;;
-  *)
-    export HTTPS_PROXY="$GH_PROXY_USED" HTTP_PROXY="$GH_PROXY_USED"
-    export https_proxy="$GH_PROXY_USED" http_proxy="$GH_PROXY_USED"
-    write_env DSH_GH_PROXY "$GH_PROXY_USED"
-    note "直连不通，本次走代理 $GH_PROXY_USED（来源：$PROXY_KIND）"
-    note "已记入 $ENV_FILE；新开的 shell 先执行: export HTTPS_PROXY='$GH_PROXY_USED'"
-    ;;
-esac
-
-step "接下来 gh 会打印一次性验证码，并尝试打开 https://github.com/login/device"
-step "在页面粘贴验证码 → Continue → Authorize GitHub CLI"
-step "协议选 HTTPS，SSH 密钥问题会被跳过"
-open_url "https://github.com/login/device"
-pause "准备好在浏览器里操作后，按 Enter 启动 gh auth login"
-
-gh auth login --hostname github.com --git-protocol https --web --skip-ssh-key \
-  || warn "gh auth login 未正常结束（可能取消、超时或网络中断）"
-
-# ── Stage 3: 验证 ─────────────────────────────────────────────────────────
-stage "验证 · gh auth status"
-
-if gh auth status; then
-  say "已验证：gh 已登录 ✅"
-  note "当前账号：$(gh api user --jq .login 2>/dev/null || echo '(查询账号失败，可稍后手动 gh auth status 查看)')"
-else
-  warn "仍未登录。常见原因：验证码过期、浏览器授权未点完、代理不通。"
-  say "重跑本脚本即可再试一次。"
-  exit 1
-fi
-
-finish
+_interactive
 }
 
 run_wizard "$@"; exit
