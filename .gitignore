@@ -1,0 +1,17 @@
+# The login wizard captures credentials into an .env file. That file is the
+# wizard's output, not its source, and it must never reach a commit.
+.env
+.env.*
+!.env.example
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor noise
+*.swp
+*~
+
+# Anything a harness leaves behind while poking at the filesystem
+*.probe*
+.probe-*

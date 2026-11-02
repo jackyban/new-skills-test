@@ -1,0 +1,19 @@
+# Line endings: the shell scripts in this repo must be LF everywhere.
+# A CRLF checkout turns "#!/usr/bin/env bash" into "bash\r" and the script dies
+# with "bad interpreter" — on Linux, in CI, and even in Git Bash through MSYS.
+# So every text file is normalised to LF in the working tree, on every platform,
+# regardless of what the committer's core.autocrlf happens to be.
+* text=auto eol=lf
+
+# Named explicitly because they are the ones that actually break: the entry
+# script, the test harness, and the extensionless fake CLI that only works
+# because of its shebang.
+*.sh        text eol=lf
+tests/fake/gh text eol=lf
+
+# Markdown is prose; normalising is still right, and it keeps diffs stable.
+*.md        text eol=lf
+
+# The wizard writes the values it captures into .env files. Treat anything
+# env-ish as text but never let Git try to merge it.
+.env*       text eol=lf
