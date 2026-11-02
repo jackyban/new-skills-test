@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# A stand-in for the GitHub CLI, driven by FAKE_GH_MODE so one file covers every
+# outcome the wizard can report. It implements only the surface the wizard
+# touches, and it never writes anything — which is what lets the "check mode
+# writes nothing" test mean something.
+#
+# The modes are deliberate about one thing: which question a given call can
+# answer. auth token says a credential is *stored*; api says whether the host
+# *accepts* it. token-rejected has both disagreeing on purpose.
+set -u
+
+mode="${FAKE_GH_MODE:-ready}"
+has_host_flag=0
+for a in "$@"; do
+  [[ "$a" == "--hostname" ]] && has_host_flag=1
+done
+
+# A machine with a second host whose credential is broken. Any auth status that
+# is not scoped to one host must fail, exactly as the real CLI does — so a
+# wizard that forgets to scope turns red instead of passing by luck.
+if [[ "$mode" == "multi-host-broken" ]] && [[ "${1:-}" == "auth" ]] && [[ "${2:-}" == "status" ]] && ! (( has_host_flag )); then
+  printf 'github.example.com\n  X The token in github.example.com is invalid\n' >&2
+  exit 1
+fi
+
+case "${1:-}" in
+  --version)
+    case "$mode" in
+      old)     printf 'gh version 2.1.0 (2021-09-01)\n' ;;
+      garbled) printf 'gh version unknown-build\n' ;;
+      *)       printf 'gh version 2.79.0 (2025-06-01)\n' ;;
+    esac
+    exit 0
+    ;;
+  auth)
+    case "${2:-}" in
+      status)
+        case "$mode" in
+          not-logged-in)
+            printf 'You are not logged into any GitHub hosts. Run gh auth login to authenticate.\n' >&2
+            exit 1
+            ;;
+          other-account)
+            printf 'github.com\n  - Logged in to github.com account monalisa (keyring)\n  - Token scopes: '\''gist'\'', '\''read:org'\'', '\''repo'\''\n'
+            exit 0
+            ;;
+          *)
+            printf 'github.com\n  - Logged in to github.com account octocat (keyring)\n  - Token scopes: '\''gist'\'', '\''read:org'\'', '\''repo'\''\n'
+            exit 0
+            ;;
+        esac
+        ;;
+      token)
+        case "$mode" in
+          not-logged-in)
+            printf 'no oauth token found for github.com\n' >&2
+            exit 1
+            ;;
+          *)
+            printf 'gho_fake_token\n'
+            exit 0
+            ;;
+        esac
+        ;;
+      *)
+        printf 'fake gh: unsupported auth subcommand\n' >&2
+        exit 1
+        ;;
+    esac
+    ;;
+  api)
+    case "$mode" in
+      not-logged-in)
+        printf 'gh: To get started with GitHub CLI, please run:  gh auth login\n' >&2
+        exit 4
+        ;;
+      token-rejected)
+        printf 'gh: HTTP 401: Bad credentials (https://api.github.com/graphql)\n' >&2
+        exit 1
+        ;;
+      unreachable)
+        printf 'gh: Get "https://api.github.com/user": dial tcp 140.82.113.5:443: i/o timeout\n' >&2
+        exit 1
+        ;;
+      other-account)
+        printf 'monalisa\n'
+        exit 0
+        ;;
+      *)
+        printf 'octocat\n'
+        exit 0
+        ;;
+    esac
+    ;;
+esac
+
+printf 'fake gh: unimplemented: %s\n' "$*" >&2
+exit 64
