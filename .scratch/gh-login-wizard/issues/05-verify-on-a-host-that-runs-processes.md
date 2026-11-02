@@ -10,7 +10,7 @@
 - [x] The interactive path is walked once end-to-end for real, and the summary it printed matches reality — host, account, protocol, and whether a proxy was needed
 - [ ] Both real-world branches are exercised at least once: a machine that was not logged in (login completes) and a machine that already was (no login, no browser)
 - [x] No green run is claimed from any session where subprocesses cannot start; if verification is partial, the ticket names exactly which cases remain unverified and why
-- [x] CI wiring is either done and observable, or explicitly deferred with the reason and the exact command to add later
+- [ ] CI wiring is either done and observable, or explicitly deferred with the reason and the exact command to add later — **deferral withdrawn when the remote appeared; wired in `.github/workflows/tests.yml`, not yet observed green**
 - [x] Any account, org, or proxy address observed during verification is kept out of the committed script
 
 ## Progress
@@ -42,8 +42,16 @@ terminal, and this session cannot spawn a process, let alone a browser:
 
 Neither is claimed as done. The walkthrough below is the script for them.
 
-**CI: deferred, with the reason.** There is no remote yet, and no CI can run
-without one. When a remote exists, add this file and nothing else:
+**CI: the deferral is withdrawn.** It was deferred because there was no remote;
+a remote now exists (`github.com/jackyban/new-skills-test`), so the reason no
+longer holds and guessing at what CI would look like is no longer good enough.
+The workflow is committed as `.github/workflows/tests.yml` and removes the
+runner's preinstalled CLI first, so the genuinely-CLI-less branch runs there
+rather than being simulated.
+
+This box stays unchecked until a run has actually been observed on GitHub:
+wired is not the same as green, and the difference is the whole subject of this
+ticket.
 
 ```yaml
 # .github/workflows/tests.yml

@@ -345,13 +345,16 @@ section "no CLI at all"
 leaks=$(existing_candidates)
 path_gh=$(command -v gh 2>/dev/null || true)
 
-# A host with the CLI installed cannot be made CLI-less by wishing. But the
-# branch under test — resolution failed, therefore gh-missing, therefore exit 10
-# — has nothing platform-specific in it. So the missing case is simulated
-# honestly: drop the directory that holds the real CLI from PATH, and shadow
-# uname so the wizard looks for the macOS locations, none of which exist here.
-# The assertions stay exactly the same; only the route to "nothing is there"
-# differs.
+# Two routes to "nothing is installed", one set of assertions.
+#
+# On a machine that genuinely has no CLI — CI, after removing the preinstalled
+# one — the real thing is tested, no tricks.
+#
+# On a developer machine the CLI cannot be un-installed by wishing. The branch
+# under test (resolution failed, therefore gh-missing, therefore exit 10) has
+# nothing platform-specific in it, so it is reached by dropping the directory
+# that holds the real CLI from PATH and shadowing uname, which makes the wizard
+# search the macOS locations that do not exist here.
 ghdir=""
 [[ -n "$path_gh" ]] && ghdir=$(dirname "$path_gh")
 
@@ -370,7 +373,13 @@ for c in /opt/homebrew/bin/gh /usr/local/bin/gh "$SANDBOX/home/.local/bin/gh"; d
   [[ -e "$c" ]] && darwin_leftovers="$darwin_leftovers $c"
 done
 
-if [[ -n "$leaks" ]] && [[ -z "$ghdir" ]]; then
+# A genuinely CLI-less machine needs no simulation at all; that is the case CI
+# gets by removing the preinstalled one. The simulation is the fallback for a
+# developer machine that has a CLI it cannot un-install.
+SP=""
+if [[ -z "$leaks" && -z "$path_gh" ]]; then
+  SP="$REAL_PATH"
+elif [[ -n "$leaks" ]] && [[ -z "$ghdir" ]]; then
   skip "gh missing (a CLI exists at $leaks and PATH cannot hide it)"
 elif [[ -n "$darwin_leftovers" ]]; then
   skip "gh missing (the simulated platform still has:$darwin_leftovers)"
@@ -378,6 +387,9 @@ elif ! PATH="$stub:$simpath" command -v bash >/dev/null 2>&1; then
   skip "gh missing (hiding $ghdir would also hide bash)"
 else
   SP="$stub:$simpath"
+fi
+
+if [[ -n "$SP" ]]; then
   run_check "$SP" "$SANDBOX/work" FAKE_GH_MODE=ready --
   if [[ $RC -eq 10 ]]; then pass "missing CLI exits 10"; else fail "missing CLI exits 10" "got $RC"; fi
   if [[ "$OUT" == "state=gh-missing exe= version= source=none $HEAD user= scopes= proxy=none" ]]; then

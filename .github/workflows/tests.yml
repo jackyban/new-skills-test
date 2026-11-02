@@ -1,0 +1,25 @@
+# The behaviour suite. There is no build step and no dependencies beyond bash,
+# curl and the fakes in tests/fake — the whole point of the seam is that it runs
+# against a fake CLI, not the network.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  behaviour:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runners ship GitHub CLI preinstalled, which would make the
+      # "nothing installed" case fall back to a simulation. Removing it lets
+      # the real branch run here, which is the whole reason this job is worth
+      # having.
+      - name: Remove the preinstalled CLI
+        run: |
+          if p=$(command -v gh); then sudo rm -f "$p"; fi
+
+      - name: Behaviour tests
+        run: bash tests/run.sh
